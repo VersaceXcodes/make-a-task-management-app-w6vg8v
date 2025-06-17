@@ -28,7 +28,9 @@
     "pg": "^8.13.3",
     "uuid": "*",
     "yaml": "^2.5.0",
-    "morgan": "^1.10.0"
+    "morgan": "^1.10.0",
+    "bcrypt": "*",
+    "socket.io": "*"
   },
   "devDependencies": {
     "concurrently": "^9.0.1",

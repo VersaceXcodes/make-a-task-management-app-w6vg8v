@@ -1,5 +1,11 @@
-{
-  "content": "",
-  "contentType": "text/typescript",
-  "path": "25259f23-8fcc-421a-87f5-ff7eec4dc010/make-a-task-management-app/vitereact/src/store/main.tsx"
-}
+import { configureStore } from '@reduxjs/toolkit';
+import tasksReducer from './slices/tasksSlice';
+
+export const store = configureStore({
+  reducer: {
+    tasks: tasksReducer,
+  },
+});
+
+export type RootState = ReturnType<typeof store.getState>;
+export type AppDispatch = typeof store.dispatch;
