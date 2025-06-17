@@ -1652,10 +1652,7 @@ app.delete('/tasks/:task_id/assignments/:user_id', authMiddleware, async (req, r
     }
 
     // Perform delete
-    await client.query(`DELETE FROM task_assignment WHERE task_id = $1 AND user_id = $2`, [
-      task_id,
-      removeUserId,
-    ]);
+    await client.query(`DELETE FROM task_assignment WHERE task_id = $1 AND user_id = $2`, [task_id, removeUserId]);
 
     await addActivityLog({
       workspace_id: task.workspace_id,
@@ -1667,7 +1664,7 @@ app.delete('/tasks/:task_id/assignments/:user_id', authMiddleware, async (req, r
 
     await client.query('COMMIT');
 
-    // Emit realtime event assignment change to remaining assigned users including remover
+    // Emit assignment change to remaining assigned users including remover
     // Fetch new list of assigned users
     const assignedUsers = await getAssignedUsersForTask(client, Number(task_id));
     const assignedUserIds = assignedUsers.map((u) => u.user_id);
@@ -1692,10 +1689,10 @@ app.delete('/tasks/:task_id/assignments/:user_id', authMiddleware, async (req, r
  * List tags scoped by workspace or user.
  */
 app.get('/tags', authMiddleware, async (req, res) => {
-  const user_id = req.user.user_id;
-  let { workspace_id, user_id: query_user_id, is_active } = req.query;
+  const authUserId = req.user.user_id;
+  let { workspace_id, user_id: queryUserId, is_active } = req.query;
   if (workspace_id !== undefined) workspace_id = Number(workspace_id);
-  if (user_id !== undefined) query_user_id = String(query_user_id);
+  if (queryUserId !== undefined) queryUserId = String(queryUserId);
 
   if (is_active !== undefined) {
     if (is_active === 'true') is_active = true;
@@ -1703,17 +1700,17 @@ app.get('/tags', authMiddleware, async (req, res) => {
     else is_active = null;
   }
 
-  // Validate either workspace_id or user_id but not both or none
-  if ((workspace_id && query_user_id) || (!workspace_id && !query_user_id)) {
+  // Validate either workspace_id or queryUserId but not both or none
+  if ((workspace_id && queryUserId) || (!workspace_id && !queryUserId)) {
     return res.status(400).json({ error: 'Either workspace_id or user_id must be specified, but not both' });
   }
 
   const client = await pool.connect();
   try {
-    if (workspace_id && !(await userHasAccessToWorkspace(user_id, workspace_id))) {
+    if (workspace_id && !(await userHasAccessToWorkspace(authUserId, workspace_id))) {
       return res.status(403).json({ error: 'Forbidden: no access to workspace' });
     }
-    if (query_user_id && query_user_id !== user_id) {
+    if (queryUserId && queryUserId !== authUserId) {
       return res.status(403).json({ error: 'Forbidden: no access to personal tags' });
     }
 
@@ -1724,7 +1721,7 @@ app.get('/tags', authMiddleware, async (req, res) => {
       params.push(workspace_id);
     } else {
       sql += `user_id = $1 `;
-      params.push(user_id);
+      params.push(authUserId);
     }
     if (is_active !== null && is_active !== undefined) {
       sql += `AND is_active = $${params.length + 1} `;
@@ -1967,9 +1964,7 @@ app.post('/tasks/:task_id/tags', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Task not found or unauthorized' });
     }
 
-    const listRes = await client.query('SELECT * FROM task_list WHERE task_list_id = $1 LIMIT 1', [
-      task.task_list_id,
-    ]);
+    const listRes = await client.query('SELECT * FROM task_list WHERE task_list_id = $1', [task.task_list_id]);
     const list = listRes.rows[0];
 
     for (const tagId of tag_ids) {
@@ -2328,7 +2323,7 @@ app.post('/tasks/:task_id/comments', authMiddleware, async (req, res) => {
       parent_comment_id: comment.parent_comment_id,
       content: comment.content,
       created_at: comment.created_at.toISOString(),
-      updated_at: comment.updated_at.toISOString(),
+      updated_at: comment.updated_at ? comment.updated_at.toISOString() : null,
       is_deleted: comment.is_deleted,
     }, task.workspace_id);
 
@@ -2339,7 +2334,7 @@ app.post('/tasks/:task_id/comments', authMiddleware, async (req, res) => {
       parent_comment_id: comment.parent_comment_id,
       content: comment.content,
       created_at: comment.created_at.toISOString(),
-      updated_at: comment.updated_at.toISOString(),
+      updated_at: comment.updated_at ? comment.updated_at.toISOString() : null,
       is_deleted: comment.is_deleted,
     });
   } catch (err) {
@@ -2399,7 +2394,7 @@ app.put('/tasks/comments/:comment_id', authMiddleware, async (req, res) => {
     emitCommentUpdated({
       comment_id: updatedComment.comment_id,
       content: updatedComment.content,
-      updated_at: updatedComment.updated_at.toISOString(),
+      updated_at: updatedComment.updated_at ? updatedComment.updated_at.toISOString() : null,
     }, null);
 
     res.json({
@@ -2409,7 +2404,7 @@ app.put('/tasks/comments/:comment_id', authMiddleware, async (req, res) => {
       parent_comment_id: updatedComment.parent_comment_id,
       content: updatedComment.content,
       created_at: updatedComment.created_at.toISOString(),
-      updated_at: updatedComment.updated_at.toISOString(),
+      updated_at: updatedComment.updated_at ? updatedComment.updated_at.toISOString() : null,
       is_deleted: updatedComment.is_deleted,
     });
   } catch (err) {
@@ -2912,8 +2907,9 @@ app.get('/search/tasks', authMiddleware, async (req, res) => {
 
 io.use(async (socket, next) => {
   try {
-    const token = socket.handshake.auth.token || socket.handshake.headers.authorization;
+    let token = socket.handshake.auth.token || socket.handshake.headers.authorization;
     if (!token) return next(new Error('Auth token missing'));
+    if (typeof token !== 'string') return next(new Error('Invalid auth token format'));
     let jwtToken;
     if (token.startsWith('Bearer ')) jwtToken = token.substring(7);
     else jwtToken = token;
