@@ -1,19 +1,12 @@
-import React from "react";
-import { Route, Routes } from "react-router-dom";
-import cofounder from "@/assets/cofounder.webp";
+import React from 'react';
 
-const App: React.FC = () => {
-	return (
-		<>
-			<div className="container mx-auto w-full xl:w-[60vw] p-12 mt-12 text-left whitespace-pre-line break-words">
-				<section className="pb-4 mb-4 text-center">
-					
-					<h1 className="mt-8 text-2xl">Vite + React</h1>
-					<h1 className="mt-2">your app will update here as it generates</h1>
-				</section>
-			</div>
-		</>
-	);
-};
+function App() {
+  return (
+    <div className="text-center p-8">
+      <h1 className="text-3xl font-bold mb-4">Vite + React</h1>
+      <p>your app will update here as it generates</p>
+    </div>
+  );
+}
 
 export default App;

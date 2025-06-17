@@ -1,120 +1,251 @@
-import React from "react";
-import { Link, useNavigate } from "react-router-dom";
-import axios from "axios";
-import { useQuery } from "@tanstack/react-query";
-import { useAppStore } from "@/store/main";
+import React from 'react';
+import { useQuery } from '@tanstack/react-query';
+import axios from 'axios';
+import { use_app_store } from '@/store/main';
+import { useNavigate, Link } from 'react-router-dom';
 
-interface DashboardStatistics {
+interface SummaryStats {
   total_tasks: number;
-  pending: number;
-  in_progress: number;
-  completed: number;
+  completed_percent: number;
+  overdue_tasks: number;
+  upcoming_deadlines_count: number;
 }
 
-interface Deadline {
-  task_id: string;
-  title: string;
-  due_date: string;
+interface ProgressBarItem {
+  workspace_id: number | null;
+  task_list_id: number | null;
+  name: string;
+  completed_percent: number;
+}
+
+interface QuickLink {
+  label: string;
+  filterParams: Record<string, any>;
 }
 
 interface DashboardData {
-  task_statistics: DashboardStatistics;
-  upcoming_deadlines: Deadline[];
+  summary_stats: SummaryStats;
+  progress_bars: ProgressBarItem[];
+  quick_links: QuickLink[];
 }
 
+// API fetch function for dashboard summary
+const fetchDashboardSummary = async (token: string): Promise<DashboardData> => {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
+  const { data } = await axios.get(`${baseUrl}/dashboard-summary`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  // Assuming API returns { summary_stats, progress_bars, quick_links }
+  return data;
+};
+
 const UV_Dashboard: React.FC = () => {
-  const token = useAppStore((state) => state.auth_state.token);
+  const auth = use_app_store((state) => state.auth);
   const navigate = useNavigate();
 
-  // Function to fetch dashboard data from the backend
-  const fetchDashboardData = async (): Promise<DashboardData> => {
-    const response = await axios.get(
-      `${import.meta.env.VITE_API_BASE_URL || "http://localhost:3000"}/api/dashboard`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      }
-    );
-    return response.data;
-  };
+  // QuickLinks fixed as per datamap default in PRD
+  const quickLinksDefault: QuickLink[] = [
+    {
+      label: 'Overdue Tasks',
+      filterParams: { status: ['Pending', 'In Progress'], due_date_end: 'today' },
+    },
+    {
+      label: "Today's Tasks",
+      filterParams: { due_date_start: 'today', due_date_end: 'today' },
+    },
+  ];
 
-  // useQuery to fetch dashboard data when the view loads
   const {
     data,
     isLoading,
     isError,
     error,
-  } = useQuery<DashboardData, Error>(["dashboard"], fetchDashboardData, {
-    enabled: !!token, // Only run if token is available (user is authenticated)
-  });
+    refetch,
+  } = useQuery<DashboardData, Error>(
+    ['dashboard_summary'],
+    () => fetchDashboardSummary(auth.token),
+    {
+      enabled: auth.is_authenticated, // fetch only if authenticated
+      staleTime: 1000 * 60, // 1 minute cache
+      retry: 1,
+    }
+  );
 
-  // Handler for navigating to the Create Task view
-  const handleQuickCreateTask = () => {
-    navigate("/tasks/create");
+  // Use fallback quickLinks from datamap default if API returns empty or no quick_links
+  const quickLinks = data?.quick_links && data.quick_links.length > 0 ? data.quick_links : quickLinksDefault;
+
+  // Handler for clicking quick links or progress bars
+  // We navigate to /lists/:task_list_id with filter query parameters if task_list_id available,
+  // otherwise fallback to /dashboard (or no navigation)
+  const onNavigateFilteredTaskList = (item: QuickLink | ProgressBarItem) => {
+    // Determine target list id
+    let task_list_id: number | null = null;
+    if ('task_list_id' in item && item.task_list_id !== null) {
+      task_list_id = item.task_list_id;
+    }
+    // If no task_list_id but workspace_id exists, possibly redirect to first list in that workspace?
+    // But UX doc only references navigating to UV_ToDoListView for progress bars or quickLinks,
+    // so only navigate if task_list_id is present.
+    if (!task_list_id) return;
+
+    // Compose query string from filterParams if QuickLink, else empty for progressBar
+    let filterParams: Record<string, any> = {};
+    if ('filterParams' in item && item.filterParams) {
+      // Translate arrays to comma-separated strings for query
+      filterParams = {};
+      for (const key in item.filterParams) {
+        const val = item.filterParams[key];
+        if (Array.isArray(val)) {
+          filterParams[key] = val.join(',');
+        } else {
+          filterParams[key] = val;
+        }
+      }
+    }
+
+    const searchParams = new URLSearchParams(filterParams);
+
+    navigate(`/lists/${task_list_id}?${searchParams.toString()}`);
   };
 
+  // Render UI in one big JSX block
   return (
     <>
-      <div className="container mx-auto p-4">
-        <h1 className="text-3xl font-bold mb-6">Dashboard</h1>
-        {isLoading ? (
-          <div className="text-center py-8">Loading...</div>
-        ) : isError ? (
-          <div className="text-center text-red-500 py-8">
-            {error?.message || "Error fetching dashboard data"}
+      <div className="max-w-7xl mx-auto space-y-8">
+        <header className="mb-4">
+          <h1 className="text-3xl font-semibold text-gray-900 dark:text-gray-100">Dashboard</h1>
+          <p className="text-gray-600 dark:text-gray-300 mt-1">
+            Overview of your tasks, projects and priorities.
+          </p>
+        </header>
+
+        {/* Loading state */}
+        {isLoading && (
+          <div className="text-center py-16 text-gray-700 dark:text-gray-300">Loading dashboard data...</div>
+        )}
+
+        {/* Error state */}
+        {isError && (
+          <div className="text-center py-16 text-red-600 dark:text-red-400">
+            Error loading dashboard: {error?.message}
+            <button
+              className="ml-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+              onClick={() => refetch()}
+            >
+              Retry
+            </button>
           </div>
-        ) : (
+        )}
+
+        {/* Main content */}
+        {!isLoading && !isError && data && (
           <>
-            {/* Statistics Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-              <div className="bg-white shadow rounded p-4">
-                <h2 className="text-xl font-semibold">Total Tasks</h2>
-                <p className="text-3xl font-bold">{data?.task_statistics.total_tasks}</p>
+            {/* Summary Stats */}
+            <section
+              aria-label="Summary statistics"
+              className="grid grid-cols-1 sm:grid-cols-4 gap-6"
+            >
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-5 flex flex-col justify-center items-center">
+                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Total Tasks</p>
+                <p className="mt-1 text-2xl font-semibold text-gray-900 dark:text-gray-100">
+                  {data.summary_stats.total_tasks}
+                </p>
               </div>
-              <div className="bg-white shadow rounded p-4">
-                <h2 className="text-xl font-semibold">Pending</h2>
-                <p className="text-3xl font-bold">{data?.task_statistics.pending}</p>
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-5 flex flex-col justify-center items-center">
+                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Completed</p>
+                <p className="mt-1 text-2xl font-semibold text-gray-900 dark:text-gray-100">
+                  {data.summary_stats.completed_percent.toFixed(0)}%
+                </p>
               </div>
-              <div className="bg-white shadow rounded p-4">
-                <h2 className="text-xl font-semibold">In Progress</h2>
-                <p className="text-3xl font-bold">{data?.task_statistics.in_progress}</p>
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-5 flex flex-col justify-center items-center">
+                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Overdue Tasks</p>
+                <p className="mt-1 text-2xl font-semibold text-red-600 dark:text-red-400 flex items-center space-x-2">
+                  <svg
+                    className="w-6 h-6 flex-shrink-0"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                    role="img"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>{data.summary_stats.overdue_tasks}</span>
+                </p>
               </div>
-              <div className="bg-white shadow rounded p-4">
-                <h2 className="text-xl font-semibold">Completed</h2>
-                <p className="text-3xl font-bold">{data?.task_statistics.completed}</p>
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-5 flex flex-col justify-center items-center">
+                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Upcoming Deadlines</p>
+                <p className="mt-1 text-2xl font-semibold text-gray-900 dark:text-gray-100">
+                  {data.summary_stats.upcoming_deadlines_count}
+                </p>
               </div>
-            </div>
-            {/* Upcoming Deadlines List */}
-            <div className="mb-8">
-              <h2 className="text-2xl font-semibold mb-4">Upcoming Deadlines</h2>
-              {data?.upcoming_deadlines.length ? (
-                <ul className="list-disc pl-6">
-                  {data.upcoming_deadlines.map((deadline) => (
-                    <li key={deadline.task_id} className="mb-2">
-                      <Link
-                        to={`/tasks/${deadline.task_id}`}
-                        className="text-blue-500 hover:underline"
-                      >
-                        {deadline.title}
-                      </Link>
-                      <span className="ml-2 text-gray-600">
-                        (Due: {new Date(deadline.due_date).toLocaleString()})
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p>No upcoming deadlines.</p>
+            </section>
+
+            {/* Progress Bars */}
+            <section aria-label="Progress bars for workspaces and lists" className="mt-12 space-y-6">
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">Progress by Workspace / List</h2>
+              {data.progress_bars.length === 0 && (
+                <p className="text-gray-600 dark:text-gray-400">No workspaces or lists to show progress.</p>
               )}
-            </div>
-            {/* Quick Create Task Button */}
-            <div>
-              <button
-                onClick={handleQuickCreateTask}
-                className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded"
-              >
-                Quick Create Task
-              </button>
-            </div>
+              <div className="space-y-4">
+                {data.progress_bars.map((bar) => {
+                  const progressPercent = Math.min(Math.max(bar.completed_percent, 0), 100);
+                  return (
+                    <button
+                      key={
+                        bar.task_list_id !== null
+                          ? `list-${bar.task_list_id}`
+                          : bar.workspace_id !== null
+                          ? `ws-${bar.workspace_id}`
+                          : `unknown-${bar.name}`
+                      }
+                      type="button"
+                      onClick={() =>
+                        onNavigateFilteredTaskList(bar)
+                      }
+                      className="w-full text-left focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded"
+                      aria-label={`Navigate to detailed view for ${bar.name} with completion ${progressPercent}%`}
+                    >
+                      <div className="mb-1 flex justify-between items-center">
+                        <span className="font-medium text-gray-900 dark:text-gray-100">{bar.name}</span>
+                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                          {progressPercent.toFixed(0)}%
+                        </span>
+                      </div>
+                      <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-4 overflow-hidden">
+                        <div
+                          className="bg-indigo-600 h-4 transition-all duration-300"
+                          style={{ width: `${progressPercent}%` }}
+                        />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            {/* Quick Links */}
+            <section aria-label="Quick links to task filters" className="mt-12">
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-4">Quick Access</h2>
+              <div className="flex flex-wrap gap-4">
+                {quickLinks.map((link, idx) => {
+                  return (
+                    <button
+                      key={`quick-link-${idx}`}
+                      type="button"
+                      onClick={() => onNavigateFilteredTaskList(link)}
+                      className="px-5 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      aria-label={`Navigate to ${link.label}`}
+                    >
+                      {link.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
           </>
         )}
       </div>
